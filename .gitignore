@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+env/
+venv/
+*.env
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Editor/IDE files
+.vscode/
+.idea/
+
+# Dependency directories
+node_modules/
+bower_components/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Python packaging
+*.egg-info/
+*.egg

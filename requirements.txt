@@ -1,0 +1,29 @@
+# FastAPI dan server
+fastapi
+uvicorn[standard]
+
+# YOLOv8 dari Ultralytics
+ultralytics
+
+# Stream & video processing
+opencv-python
+imageio
+imageio-ffmpeg  # Untuk stream/video dari URL
+
+# Tracking
+filterpy        # Untuk SORT (Simple Online Realtime Tracking)
+
+# Utils
+numpy
+pillow
+requests        # Untuk ambil stream image
+python-multipart  # Untuk file upload (kalau dibutuhkan)
+
+# Config & logging
+pyyaml
+loguru
+
+matplotlib
+matplotlib-inline
+pandas
+numpy

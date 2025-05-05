@@ -23,6 +23,7 @@ def load_images_from_folder(folder_path):
             print(f"Error: Gambar {filename} tidak dapat dimuat.")
     return images
 
+
 def load_video(video_path):
     """
     Memuat video dari path yang diberikan dan mengembalikan frame-frame dalam video.

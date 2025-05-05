@@ -25,5 +25,6 @@ loguru
 
 matplotlib
 matplotlib-inline
+
 pandas
 numpy

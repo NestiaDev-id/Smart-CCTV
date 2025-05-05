@@ -1,37 +1,48 @@
 import random
 
-def to_binary(value, num_bits=10):
-    scaled_value = int(value * (2 ** num_bits))
-    return bin(scaled_value)[2:].zfill(num_bits)
+def from_binary(binary_str, num_bits=10):
+    int_val = int(binary_str, 2)
+    return int_val / (2 ** num_bits)
 
-def pembentukan_populasi_awal(jumlah_kromosom):
-    populasi = []
+def pembentukan_populasi(populasi):
+    # Konversi nilai biner ke skala asli
+    lr_scaled = from_binary(populasi['LR'], 10)             # learning rate: antara 0.00001 - 0.01
+    cnn_scaled = from_binary(populasi['CNN_Filter'], 10)    # jumlah filter CNN: 16 - 128
+    lstm_scaled = from_binary(populasi['LSTM_Units'], 10)   # jumlah unit LSTM: 32 - 256
+    seq_scaled = from_binary(populasi['Seq_Length'], 10)    # panjang sequence: 5 - 30
+    dropout_scaled = from_binary(populasi['Dropout'], 10)   # dropout rate: 0.1 - 0.5
+    
+    # Normalisasi ke rentang [0, 1] agar bisa di-encode ke biner
+    # Kembalikan ke rentang asli
+    lr = 1e-5 + lr_scaled * (1e-2 - 1e-5)                    # learning rate asli
+    cnn_filter = int(round(16 + cnn_scaled * (128 - 16)))   # normalisasi cnn_filter
+    lstm_units = int(round(32 + lstm_scaled * (256 - 32)))  # normalisasi lstm units
+    seq_len = int(round(5 + seq_scaled * (30 - 5)))         # normalisasi panjang urutan
+    dropout = round(0.1 + dropout_scaled * (0.5 - 0.1), 3)   # normalisasi dropout
+    #  lr_scaled = (lr - 1e-5) / (1e-2 - 1e-5)                        # normalisasi learning rate
+    # cnn_scaled = (cnn_filter - 16) / (128 - 16)                   # normalisasi cnn_filter
+    # lstm_scaled = (lstm_units - 32) / (256 - 32)                  # normalisasi lstm units
+    # seq_scaled = (seq_len - 5) / (30 - 5)                         # normalisasi panjang urutan
+    # dropout_scaled = (dropout - 0.1) / (0.5 - 0.1)                # normalisasi dropout
+    populasi = {
+        "num_conv_layers": 3,                   # default: 3 layer CNN
+        "filters": [cnn_filter] * 3,            # 3 filter sama untuk tiap layer
+        "kernel_sizes": [3, 3, 3],              # ukuran kernel CNN
+        "activation": "relu",                   # fungsi aktivasi (default)
+        "dropout_cnn": dropout,                 # dropout di bagian CNN
 
-    for _ in range(jumlah_kromosom):
-        # Generate nilai acak dalam range yang telah ditentukan
-        lr = random.uniform(1e-5, 1e-2)  # learning rate
-        cnn_filter = random.randint(16, 128)  # filter CNN
-        lstm_units = random.randint(32, 256)  # unit LSTM
-        seq_len = random.randint(5, 30)  # panjang urutan
-        dropout = random.uniform(0.1, 0.5)  # dropout rate
+        "lstm_hidden_size": lstm_units,         # ukuran hidden state LSTM
+        "lstm_num_layers": 2,                   # jumlah layer LSTM
+        "bidirectional": True,                  # LSTM bidirectional
+        "dropout_lstm": dropout,                # dropout di LSTM
+        "seq_length": seq_len,                  # panjang urutan input
 
-        # Skala ke [0, 1] untuk encode ke biner
-        lr_scaled = (lr - 1e-5) / (1e-2 - 1e-5)
-        cnn_scaled = (cnn_filter - 16) / (128 - 16)
-        lstm_scaled = (lstm_units - 32) / (256 - 32)
-        seq_scaled = (seq_len - 5) / (30 - 5)
-        dropout_scaled = (dropout - 0.1) / (0.5 - 0.1)
+        "learning_rate": round(lr, 6),          # learning rate model
+        "batch_size": 16,                       # batch size (default)
+        "optimizer": "adam",                    # optimizer (default)
+        "Fitness": populasi['Fitness']          # nilai fitness (tetap sama)
+    }
 
-        # Encode ke biner
-        individu = {
-            'LR': to_binary(lr_scaled),
-            'CNN_Filter': to_binary(cnn_scaled),
-            'LSTM_Units': to_binary(lstm_scaled),
-            'Seq_Length': to_binary(seq_scaled),
-            'Dropout': to_binary(dropout_scaled),
-            'Fitness': None
-        }
-
-        populasi.append(individu)
 
     return populasi
+

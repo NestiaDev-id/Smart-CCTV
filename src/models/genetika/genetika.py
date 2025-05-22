@@ -104,27 +104,29 @@ def pembentukan_populasi_awal(jumlahKromosom):
     return populasi
 
 
-def evaluasi_fitness(populasi, train_X, train_y, val_X, val_y, epochs_ga=10):
-    print("\nMemulai Evaluasi Fitness untuk Populasi...")
+def evaluasi_fitness(populasi, 
+                     train_X, train_y, val_X, val_y, 
+                     input_shape_per_frame, num_classes, # Parameter baru
+                     epochs_ga=10):
+    print("\n(GA) Memulai Evaluasi Fitness untuk Populasi...")
     for i, individu in enumerate(populasi):
-        print(f" Mengevaluasi individu {i+1}/{len(populasi)}...")
-        # Decode chromosome jika belum ada dictionary 'hyperparameters' atau jika ingin memastikan konsistensi
-        # Jika 'hyperparameters' sudah diisi saat pembuatan individu dan tidak diubah, tidak perlu decode ulang.
-        # Namun, lebih aman untuk selalu decode dari 'chromosome' sebagai satu-satunya sumber kebenaran gen.
+        print(f" (GA) Mengevaluasi individu {i+1}/{len(populasi)}...")
         decoded_params = decode_chromosome_to_hyperparameters(individu['chromosome'])
-        individu['hyperparameters'] = decoded_params # Update agar konsisten
+        individu['hyperparameters'] = decoded_params
 
+        # 4. Update Pemanggilan build_and_train_model_for_ga
         fitness_value = build_and_train_model_for_ga(
             individu['hyperparameters'],
+            input_shape_per_frame, # Pass parameter ini
+            num_classes,           # Pass parameter ini
             train_X, train_y,
             val_X, val_y,
             epochs_ga=epochs_ga
         )
         individu['fitness'] = fitness_value
-        print(f" Individu {i+1} Fitness: {fitness_value:.4f}")
-    print("Evaluasi Fitness Selesai.\n")
-    return populasi # Mengembalikan populasi dengan fitness yang terupdate
-
+        print(f" (GA) Individu {i+1} Fitness: {fitness_value:.4f}")
+    print("(GA) Evaluasi Fitness Selesai.\n")
+    return populasi
 def roulette_wheel_selection(populasi):
 
     """Seleksi individu berdasarkan fitness (asumsi fitness lebih tinggi lebih baik)."""
@@ -183,51 +185,53 @@ def crossover_operator(parent1_chromosome, parent2_chromosome, crossover_rate=0.
     
     return offspring1_chromo, offspring2_chromo
 
-def algoritma_genetika_yolo_cnn_lstm(train_X, train_y, val_X, val_y,
-                                     jumlah_kromosom, generations,
-                                     crossover_rate, mutation_rate,
-                                     epochs_per_eval, # Epoch untuk melatih model di setiap evaluasi fitness
-                                     elite_size=2): # Jumlah individu elit
+def algoritma_genetika_yolo_cnn_lstm(
+    train_X, train_y, val_X, val_y,
+    input_shape_per_frame, # Parameter baru
+    num_classes,           # Parameter baru
+    jumlah_kromosom, generations,
+    crossover_rate, mutation_rate,
+    epochs_per_eval,
+    elite_size=2):
     
-    # 1. Inisialisasi Populasi
     populasi = pembentukan_populasi_awal(jumlah_kromosom)
     
-    # 2. Evaluasi Fitness Awal
-    print("Memulai Evaluasi Fitness untuk Populasi Awal...")
-    populasi = evaluasi_fitness(populasi, train_X, train_y, val_X, val_y, epochs_ga=epochs_per_eval)
+    print("(GA) Memulai Evaluasi Fitness untuk Populasi Awal...")
+    # 2. Update Pemanggilan evaluasi_fitness
+    populasi = evaluasi_fitness(populasi, 
+                                train_X, train_y, val_X, val_y,
+                                input_shape_per_frame, num_classes, # Pass parameter baru
+                                epochs_ga=epochs_per_eval)
     
     best_individu_overall = None
-    best_fitness_overall = float('-inf') # Asumsi akurasi (maksimalkan)
-    fitness_history = [] # Untuk melacak fitness terbaik per generasi
+    best_fitness_overall = float('-inf')
+    fitness_history = []
 
-    # Inisialisasi best_individu_overall dengan yang terbaik dari populasi awal
-    for ind in populasi:
-        if ind['fitness'] > best_fitness_overall:
-            best_fitness_overall = ind['fitness']
-            best_individu_overall = ind.copy() # Salin individu
-    
-    if best_individu_overall:
-        print(f"Best Fitness Awal: {best_fitness_overall:.4f}, Hyperparams: {best_individu_overall['hyperparameters']}")
+    current_best_in_initial_pop = max(populasi, key=lambda x: x['fitness'], default=None)
+    if current_best_in_initial_pop and current_best_in_initial_pop['fitness'] > float('-inf'):
+        best_fitness_overall = current_best_in_initial_pop['fitness']
+        best_individu_overall = current_best_in_initial_pop.copy()
+        print(f"(GA) Best Fitness Awal: {best_fitness_overall:.4f}")
     else:
-        print("Tidak ada individu valid di populasi awal.")
-        return None, []
+        print("(GA) Tidak ada individu valid di populasi awal atau semua fitness buruk.")
+        # Bisa return di sini atau lanjut dengan fitness buruk jika itu yang diinginkan
+        # return None, [] 
 
-    fitness_history.append(best_fitness_overall)
+    if best_fitness_overall > float('-inf'):
+        fitness_history.append(best_fitness_overall)
+    
     no_improvement_count = 0
 
-    # 3. Loop Generasi
     for gen in range(generations):
-        print(f"\n--- Generasi {gen + 1}/{generations} ---")
-        
+        print(f"\n--- (GA) Generasi {gen + 1}/{generations} ---")
         new_population = []
         
-        # a.i Elitisme
-        populasi.sort(key=lambda x: x['fitness'], reverse=True) # Urutkan dari fitness tertinggi
-        for i in range(min(elite_size, len(populasi))): # Pastikan elite_size tidak melebihi ukuran populasi
-            if populasi[i]['fitness'] > float('-inf'): # Hanya bawa elit yang valid
+        # Elitisme
+        populasi.sort(key=lambda x: x['fitness'], reverse=True)
+        for i in range(min(elite_size, len(populasi))):
+            if populasi[i]['fitness'] > float('-inf'):
                  new_population.append(populasi[i].copy())
         
-        # a.ii Loop untuk Mengisi Sisa Populasi Baru
         while len(new_population) < jumlah_kromosom:
             parent1 = roulette_wheel_selection(populasi)
             parent2 = roulette_wheel_selection(populasi)
@@ -239,11 +243,10 @@ def algoritma_genetika_yolo_cnn_lstm(train_X, train_y, val_X, val_y,
             offspring1_chromo_mutated = mutation_operator(offspring1_chromo, mutation_rate)
             offspring2_chromo_mutated = mutation_operator(offspring2_chromo, mutation_rate)
             
-            # Buat individu offspring baru
             new_population.append({
                 'chromosome': offspring1_chromo_mutated,
                 'hyperparameters': decode_chromosome_to_hyperparameters(offspring1_chromo_mutated),
-                'fitness': float('-inf') # Akan dievaluasi
+                'fitness': float('-inf')
             })
             if len(new_population) < jumlah_kromosom:
                 new_population.append({
@@ -252,65 +255,63 @@ def algoritma_genetika_yolo_cnn_lstm(train_X, train_y, val_X, val_y,
                     'fitness': float('-inf')
                 })
         
-        # b. Ganti Populasi Lama dengan Populasi Baru
-        populasi = new_population
+        populasi = new_population[:jumlah_kromosom] # Pastikan ukuran populasi
         
-        # c. Evaluasi Fitness Populasi Baru
-        print(f"Memulai Evaluasi Fitness untuk Generasi {gen + 1}...")
-        populasi = evaluasi_fitness(populasi, train_X, train_y, val_X, val_y, epochs_ga=epochs_per_eval)
+        print(f"(GA) Memulai Evaluasi Fitness untuk Generasi {gen + 1}...")
+        # 2. Update Pemanggilan evaluasi_fitness (lagi di dalam loop)
+        populasi = evaluasi_fitness(populasi,
+                                    train_X, train_y, val_X, val_y,
+                                    input_shape_per_frame, num_classes, # Pass parameter baru
+                                    epochs_ga=epochs_per_eval)
         
-        # d. Lacak Individu Terbaik
         current_gen_best_fitness = float('-inf')
-        current_gen_best_individu = None
+        found_valid_fitness_in_gen = False
         for ind in populasi:
-            if ind['fitness'] > current_gen_best_fitness:
-                current_gen_best_fitness = ind['fitness']
-            if ind['fitness'] > best_fitness_overall:
-                best_fitness_overall = ind['fitness']
-                best_individu_overall = ind.copy() # Salin individu
-                no_improvement_count = 0 # Reset jika ada perbaikan
-                print(f"  ** Individu Terbaik Baru Ditemukan di Generasi {gen+1}! Fitness: {best_fitness_overall:.4f} **")
-                print(f"     Hyperparams: {best_individu_overall['hyperparameters']}")
+            if ind['fitness'] > float('-inf'): # Hanya pertimbangkan fitness yang valid
+                found_valid_fitness_in_gen = True
+                if ind['fitness'] > current_gen_best_fitness:
+                    current_gen_best_fitness = ind['fitness']
+                
+                if ind['fitness'] > best_fitness_overall:
+                    best_fitness_overall = ind['fitness']
+                    best_individu_overall = ind.copy()
+                    no_improvement_count = 0
+                    print(f"  (GA) ** Individu Terbaik Baru Ditemukan! Fitness: {best_fitness_overall:.4f} **")
 
-        if current_gen_best_fitness > float('-inf'):
-             fitness_history.append(current_gen_best_fitness)
-             print(f"Fitness Terbaik Generasi {gen+1}: {current_gen_best_fitness:.4f}")
-        else: # Jika tidak ada fitness valid di generasi ini (jarang terjadi)
-            fitness_history.append(fitness_history[-1] if fitness_history else float('-inf'))
-
-
-        if best_individu_overall and best_individu_overall['fitness'] == current_gen_best_fitness :
-             pass # Tidak ada perbaikan dari yang sudah ada
-        else:
-             no_improvement_count +=1
-
-
-        # e. Mekanisme Stagnasi (Contoh sederhana)
-        if no_improvement_count >= 10: # Jika tidak ada perbaikan dalam 10 generasi
-            print("Tidak ada perbaikan signifikan, mencoba meningkatkan laju mutasi sementara.")
-            # Anda bisa meningkatkan mutation_rate untuk beberapa generasi berikutnya
-            # atau melakukan diversifikasi populasi seperti di kode Holt-Winters Anda.
-            # Untuk sekarang, kita reset saja agar tidak terjebak selamanya.
-            # Jika Anda ingin mekanisme diversifikasi, bisa diadaptasi dari kode sebelumnya.
-            no_improvement_count = 0 # Reset untuk menghindari loop
-            # Contoh diversifikasi sederhana: ganti sebagian populasi dengan individu acak baru
-            num_to_replace = int(0.3 * jumlah_kromosom) # Ganti 30%
-            populasi.sort(key=lambda x: x['fitness']) # Urutkan dari fitness terendah
-            new_random_individuals = pembentukan_populasi_awal(num_to_replace)
-            # Evaluasi individu baru ini sebelum dimasukkan
-            new_random_individuals = evaluasi_fitness(new_random_individuals,  train_X, train_y, val_X, val_y, epochs_ga=epochs_per_eval)
-
-            populasi = populasi[num_to_replace:] + new_random_individuals # Ganti yang terburuk
-            print("Diversifikasi populasi dilakukan.")
+        if found_valid_fitness_in_gen:
+            fitness_history.append(current_gen_best_fitness)
+            print(f"(GA) Fitness Terbaik Generasi {gen+1}: {current_gen_best_fitness:.4f}")
+            if current_gen_best_fitness <= best_fitness_overall and best_fitness_overall > float('-inf'): # <= karena bisa jadi sama dengan yang global
+                 no_improvement_count +=1
+        else: # Jika tidak ada fitness valid di generasi ini
+            print(f"(GA) Tidak ada fitness valid di Generasi {gen+1}.")
+            fitness_history.append(fitness_history[-1] if fitness_history else float('-inf')) # Ulangi fitness terakhir
+            no_improvement_count +=1
 
 
-    print("\n--- Optimasi Algoritma Genetika Selesai ---")
-    if best_individu_overall:
-        print(f"Individu Terbaik Keseluruhan Ditemukan:")
+        if no_improvement_count >= 10: # Anda bisa membuat ini sebagai parameter
+            print("(GA) Tidak ada perbaikan signifikan, mencoba diversifikasi populasi.")
+            # ... (logika diversifikasi seperti sebelumnya) ...
+            # Contoh: Ganti 30% terburuk dengan individu baru acak
+            populasi.sort(key=lambda x: x['fitness']) # Terendah di awal
+            num_to_replace = int(0.3 * jumlah_kromosom)
+            if num_to_replace > 0:
+                new_random_individuals = pembentukan_populasi_awal(num_to_replace)
+                new_random_individuals = evaluasi_fitness(new_random_individuals,
+                                                        train_X, train_y, val_X, val_y,
+                                                        input_shape_per_frame, num_classes,
+                                                        epochs_ga=epochs_per_eval)
+                populasi = populasi[num_to_replace:] + new_random_individuals # Ganti yang terburuk
+            no_improvement_count = 0 # Reset
+            print("(GA) Diversifikasi populasi selesai.")
+
+    # ... (sisa fungsi seperti sebelumnya) ...
+    print("\n--- (GA) Optimasi Algoritma Genetika Selesai ---")
+    if best_individu_overall and best_individu_overall['fitness'] > float('-inf'):
+        print(f"(GA) Individu Terbaik Keseluruhan Ditemukan:")
         print(f"  Fitness (Val Accuracy): {best_individu_overall['fitness']:.4f}")
-        print(f"  Hyperparameters: {best_individu_overall['hyperparameters']}")
-        print(f"  Chromosome: {best_individu_overall['chromosome']}")
+        # ... (print hyperparams) ...
     else:
-        print("Tidak ada individu terbaik yang ditemukan.")
+        print("(GA) Tidak ada individu terbaik yang valid ditemukan setelah semua generasi.")
         
     return best_individu_overall, fitness_history

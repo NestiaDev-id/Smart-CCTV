@@ -1,9 +1,8 @@
 import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, TimeDistributed, Flatten, LSTM, Dense, Dropout, Bidirectional
-from tensorflow.keras.optimizers import Adam, SGD, RMSprop
-# Anda mungkin perlu callback seperti EarlyStopping
-from tensorflow.keras.callbacks import EarlyStopping 
+from tensorflow import Model
+from tensorflow import Input, Conv2D, MaxPooling2D, TimeDistributed, Flatten, LSTM, Dense, Dropout, Bidirectional
+from tensorflow import Adam, SGD, RMSprop
+from tensorflow import EarlyStopping 
 
 import numpy as np # Berguna untuk data dummy jika diperlukan untuk testing awal
 import random # Sudah ada di genetika.py
@@ -213,7 +212,9 @@ def build_and_train_model_for_ga(hyperparams, input_shape_per_frame, num_classes
                Jika loss, kembalikan nilai negatif dari loss atau 1/loss (agar lebih tinggi lebih baik).
                Atau, modifikasi GA untuk meminimalkan fitness.
     """
-    print(f"  Mengevaluasi hyperparams: {hyperparams}")
+    print(f"  (GA) Mengevaluasi hyperparams: {hyperparams} untuk input_shape: {input_shape_per_frame}, num_classes: {num_classes}")
+
+    # print(f"  Mengevaluasi hyperparams: {hyperparams}")
     try:
         # Dapatkan seq_length dari hyperparameter atau dari data jika tetap
         seq_length = hyperparams.get('seq_length', train_X_seq.shape[1] if train_X_seq is not None else 10)

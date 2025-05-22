@@ -61,8 +61,8 @@ Untuk menyiapkan lingkungan dan menjalankan proyek ini, ikuti langkah-langkah be
 1.  **Klon Repositori (jika sudah diunggah ke Git)**:
 
     ```bash
-    git clone [https://www.andarepository.com/](https://www.andarepository.com/)
-    cd [nama-direktori-proyek]
+    git clone https://github.com/NestiaDev-id/Smart-CCTV.git
+    cd Smart-CCTV
     ```
 
 2.  **Buat dan Aktifkan Virtual Environment (Direkomendasikan)**:

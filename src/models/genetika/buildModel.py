@@ -1,60 +1,71 @@
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Reshape, LSTM, Bidirectional
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Dropout, Reshape, LSTM, Bidirectional, TimeDistributed
 from tensorflow.keras.optimizers import Adam, SGD
 
-def build_model(params):
-    input_shape = (params['seq_length'], 64, 64, 3)  # misalnya input adalah frame video (sequence of images)
+def build_yolo_cnn_lstm_model(params):
+    # Input: sekuens gambar (misalnya, hasil crop objek dari YOLO)
+    # params['seq_length'] adalah jumlah frame dalam satu sekuens
+    # params['img_height'], params['img_width'], params['img_channels'] adalah dimensi gambar objek
+    input_shape = (params['seq_length'], params['img_height'], params['img_width'], params['img_channels'])
     input_layer = Input(shape=input_shape)
 
-    # Reshape agar jadi batch*seq_length, 64, 64, 3
-    reshaped = Reshape((input_shape[0] * input_shape[1], input_shape[2], input_shape[3]))(input_layer)
+    # CNN path (menggunakan TimeDistributed untuk menerapkan CNN pada setiap frame dalam sekuens)
+    cnn_model = Conv2D(filters=params['filters'][0], kernel_size=(params['kernel_sizes'][0], params['kernel_sizes'][0]), activation=params['activation'], padding='same')(input_layer)
+    cnn_model = MaxPooling2D(pool_size=(2, 2))(cnn_model)
 
-    # CNN path (gunakan TimeDistributed kalau input 3D)
-    x = reshaped
-    for i in range(params['num_conv_layers']):
-        x = Conv2D(
-            filters=params['filters'][i],
-            kernel_size=(params['kernel_sizes'][i], params['kernel_sizes'][i]),
-            activation=params['activation'],
-            padding='same'
-        )(x)
-        x = MaxPooling2D(pool_size=(2, 2))(x)
+    for i in range(1, params['num_conv_layers']):
+        cnn_model = Conv2D(filters=params['filters'][i], kernel_size=(params['kernel_sizes'][i], params['kernel_sizes'][i]), activation=params['activation'], padding='same')(cnn_model)
+        cnn_model = MaxPooling2D(pool_size=(2, 2))(cnn_model)
 
-    x = Flatten()(x)
+    # Menggunakan TimeDistributed untuk Flatten dan Dense layer jika fitur diekstrak per frame
+    # sebelum masuk ke LSTM
+    # Jika CNN mengekstrak fitur dari seluruh sekuens sekaligus (misalnya, menggunakan Conv3D),
+    # maka TimeDistributed tidak diperlukan di sini.
+    # Asumsi di sini adalah kita menerapkan CNN ke setiap frame secara independen.
     
-    # Reshape ke (batch_size, timesteps, features)
-    x = Reshape((params['seq_length'], -1))(x)
+    # Untuk menerapkan Flatten ke setiap frame dalam sekuens
+    # Output dari CNN terakhir (sebelum flatten) adalah (None, seq_length, h_cnn, w_cnn, num_filters_cnn)
+    # Kita perlu mereshape atau menggunakan TimeDistributed(Flatten())
+    
+    # Contoh dengan TimeDistributed(Flatten())
+    # Kemudian bisa diikuti TimeDistributed(Dense(...)) untuk mendapatkan feature vector per frame
+    time_distributed_flatten = TimeDistributed(Flatten())(cnn_model)
+    
+    # (Optional) Dense layer setelah Flatten per frame
+    # time_distributed_dense = TimeDistributed(Dense(params['dense_units_after_cnn'], activation=params['activation']))(time_distributed_flatten)
+    # lstm_input = time_distributed_dense
+    lstm_input = time_distributed_flatten # Jika tidak ada Dense layer setelah Flatten
 
     # LSTM layer
     if params['bidirectional']:
-        x = Bidirectional(LSTM(
+        lstm_output = Bidirectional(LSTM(
             params['lstm_hidden_size'],
-            return_sequences=False,
-            dropout=params['dropout_lstm'],
-            recurrent_dropout=0.1
-        ))(x)
+            return_sequences=False, # False karena kita ingin output akhir setelah memproses seluruh sekuens
+            dropout=params['dropout_lstm']
+            # recurrent_dropout tidak lagi direkomendasikan untuk GPU di Keras versi baru, 
+            # pertimbangkan alternatif atau hapus jika ada isu performa/kompatibilitas
+        ))(lstm_input)
     else:
-        x = LSTM(
+        lstm_output = LSTM(
             params['lstm_hidden_size'],
             return_sequences=False,
-            dropout=params['dropout_lstm'],
-            recurrent_dropout=0.1
-        )(x)
+            dropout=params['dropout_lstm']
+        )(lstm_input)
 
     # Dense + Dropout
-    x = Dropout(params['dropout_lstm'])(x)
-    x = Dense(64, activation='relu')(x)
-    output = Dense(10, activation='softmax')(x)  # misalnya klasifikasi 10 kelas
+    x = Dropout(params['dropout_dense_after_lstm'])(lstm_output) # Dropout setelah LSTM
+    x = Dense(params['dense_layer_size'], activation=params['activation'])(x) # Dense layer setelah LSTM
+    output = Dense(params['num_classes'], activation='softmax')(x) # Output layer (misalnya klasifikasi)
 
     model = Model(inputs=input_layer, outputs=output)
 
     # Optimizer sesuai parameter
-    if params['optimizer'] == 'adam':
+    if params['optimizer'].lower() == 'adam':
         optimizer = Adam(learning_rate=params['learning_rate'])
-    elif params['optimizer'] == 'sgd':
+    elif params['optimizer'].lower() == 'sgd':
         optimizer = SGD(learning_rate=params['learning_rate'])
     else:
-        raise ValueError("Unsupported optimizer")
+        raise ValueError("Optimizer tidak didukung")
 
     model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
     

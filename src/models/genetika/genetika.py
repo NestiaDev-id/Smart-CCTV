@@ -1,9 +1,8 @@
 import random
+from .buildModel import build_and_train_model_for_ga
 
 import sys
 sys.set_int_max_str_digits(10240)
-
-
 def to_binary(value, num_bits=10):
     # Mengalikan nilai dengan 1000 dan mengubahnya menjadi integer
     scaled_value = int(value * (2** num_bits))  
@@ -13,332 +12,305 @@ def to_binary(value, num_bits=10):
 def to_decimal(binary_value):
     return int(binary_value, 2) / (2 ** len(binary_value))  # Mengubah dari biner ke desimal
 
-# Algoritma Genetika
+HYPERPARAMETER_RANGES = {
+    'learning_rate': {'type': 'float', 'min': 0.0001, 'max': 0.01, 'num_bits': 7}, # 2^7 = 128 steps
+    'cnn_filters_l1': {'type': 'int_choice', 'choices': [16, 32, 64], 'num_bits': 2}, # 2^2 = 4 choices (perlu 3 choices)
+    'cnn_kernel_l1': {'type': 'int_choice', 'choices': [3, 5], 'num_bits': 1},
+    'lstm_units': {'type': 'int_choice', 'choices': [32, 64, 128], 'num_bits': 2},
+    'seq_length': {'type': 'int_choice', 'choices': [10, 20, 30], 'num_bits': 2},
+    'dropout_cnn': {'type': 'float', 'min': 0.1, 'max': 0.5, 'num_bits': 4}, # 2^4 = 16 steps
+    'activation_cnn': {'type': 'categorical', 'choices': ['relu', 'tanh'], 'num_bits': 1},
+    'optimizer': {'type': 'categorical', 'choices': ['adam', 'sgd'], 'num_bits': 1}
+}
+
+def encode_value(value, param_details):
+    """Encode satu nilai hyperparameter ke biner."""
+    if param_details['type'] == 'float':
+        # Skalakan nilai ke rentang [0, 2^num_bits - 1]
+        min_val, max_val = param_details['min'], param_details['max']
+        num_bits = param_details['num_bits']
+        if value < min_val: value = min_val
+        if value > max_val: value = max_val
+        scaled_value = int(((value - min_val) / (max_val - min_val)) * (2**num_bits - 1))
+        return bin(scaled_value)[2:].zfill(num_bits)
+    elif param_details['type'] == 'int_choice':
+        # Cari index dari choice, lalu ubah index ke biner
+        try:
+            idx = param_details['choices'].index(value)
+        except ValueError: # Jika value tidak ada di choices, ambil yang pertama
+            idx = 0
+        return bin(idx)[2:].zfill(param_details['num_bits'])
+    elif param_details['type'] == 'categorical':
+        try:
+            idx = param_details['choices'].index(value)
+        except ValueError:
+            idx = 0
+        return bin(idx)[2:].zfill(param_details['num_bits'])
+    return ""
+
+def decode_binary_segment(binary_segment, param_details):
+    """Decode segmen biner ke nilai hyperparameter asli."""
+    int_val = int(binary_segment, 2)
+    if param_details['type'] == 'float':
+        min_val, max_val = param_details['min'], param_details['max']
+        num_bits = param_details['num_bits']
+        # Deskalakan dari [0, 2^num_bits - 1] ke [min_val, max_val]
+        return min_val + (int_val / (2**num_bits - 1)) * (max_val - min_val)
+    elif param_details['type'] == 'int_choice':
+        # Ambil choice berdasarkan index
+        return param_details['choices'][int_val]
+    elif param_details['type'] == 'categorical':
+        return param_details['choices'][int_val]
+    return None
+
+def generate_random_hyperparameters():
+    """Menghasilkan satu set hyperparameter acak."""
+    params = {}
+    for name, details in HYPERPARAMETER_RANGES.items():
+        if details['type'] == 'float':
+            params[name] = random.uniform(details['min'], details['max'])
+        elif details['type'] == 'int_choice' or details['type'] == 'categorical':
+            params[name] = random.choice(details['choices'])
+    return params
+
+def encode_hyperparameters_to_chromosome(hyperparams):
+    """Menggabungkan semua hyperparameter yang sudah di-encode menjadi satu chromosome."""
+    chromosome_str = ""
+    for name, details in HYPERPARAMETER_RANGES.items():
+        chromosome_str += encode_value(hyperparams.get(name), details)
+    return chromosome_str
+
+def decode_chromosome_to_hyperparameters(chromosome_str):
+    """Memecah chromosome menjadi hyperparameter individual."""
+    hyperparams = {}
+    current_pos = 0
+    for name, details in HYPERPARAMETER_RANGES.items():
+        num_bits = details['num_bits']
+        segment = chromosome_str[current_pos : current_pos + num_bits]
+        hyperparams[name] = decode_binary_segment(segment, details)
+        current_pos += num_bits
+    return hyperparams
+
 def pembentukan_populasi_awal(jumlahKromosom):
-    biner = []
-    for i in range(jumlahKromosom):
-        # Generate random number untuk alpha beta dan gamma
-        alpha = random.uniform(0.01, 0.99)
-        beta = random.uniform(0.01, 0.99)
-        gamma = random.uniform(0.01, 0.99)
-        # Mengubah alpha, beta, gamma ke format biner
-        alpha_biner = to_binary(alpha)
-        beta_biner = to_binary(beta)
-        gamma_biner = to_binary(gamma)
-        biner.append({
-            'Alpha': alpha_biner,
-            'Beta': beta_biner,
-            'Gamma': gamma_biner,
-            'Fitness': None
-            })
-    return biner
-
-# Fungsi evaluasi_fitness tanpa print yang tidak diperlukan
-def evaluasi_fitness(populasi, train, test):
-    evaluasi_fitness = []
-    
-    for i, individu in enumerate(populasi):
-        # Mengambil nilai alpha, beta, gamma dalam format biner
-        alpha_biner = individu['Alpha']
-        beta_biner = individu['Beta']
-        gamma_biner = individu['Gamma']
-        
-        # Konversi nilai biner menjadi desimal
-        alpha = to_decimal(alpha_biner)
-        beta = to_decimal(beta_biner)
-        gamma = to_decimal(gamma_biner)
-        
-        # Menggunakan nilai alpha, beta, gamma untuk melakukan peramalan
-        _, hasil_ramalan, _ = holt(train, alpha, beta, gamma)
-        
-        # Hitung fitness berdasarkan MAPE
-        individu['Fitness'] = MAPE(test, hasil_ramalan)
-        
-        # Ubah ke biner lagi
-        alpha = to_binary(alpha)
-        beta = to_binary(beta)
-        gamma = to_binary(gamma)
-
-        # Menyusun hasil evaluasi fitness untuk individu
-        evaluasi_fitness.append({
-            'Alpha': alpha,
-            'Beta': beta,
-            'Gamma': gamma,
-            'Fitness': individu['Fitness']
+    populasi = []
+    for _ in range(jumlahKromosom):
+        random_params = generate_random_hyperparameters()
+        chromosome = encode_hyperparameters_to_chromosome(random_params)
+        populasi.append({
+            'chromosome': chromosome,
+            'hyperparameters': random_params, # Simpan juga hasil decode untuk kemudahan
+            'fitness': float('-inf') # Inisialisasi fitness (asumsi akurasi, ingin dimaksimalkan)
         })
-
-    return evaluasi_fitness    
-
-def RouletteWhell(populasi):
-    fitness_balik = []
-    fitness_relatif = []
-    fitness_kumulatif = []
-    
-    for individu in populasi:
-        # proses pembalikan
-        hitung_pembalik = 1 / individu['Fitness']
-        fitness_balik.append(hitung_pembalik)
+    return populasi
 
 
-    total_fitness_balik = sum(fitness_balik)
-    
-    # hitung fitnes relatif
-    for i in range(len(populasi)):
-        hitung_relatif = fitness_balik[i] / total_fitness_balik
-        fitness_relatif.append(hitung_relatif)
+def evaluasi_fitness(populasi, train_X, train_y, val_X, val_y, epochs_ga=10):
+    print("\nMemulai Evaluasi Fitness untuk Populasi...")
+    for i, individu in enumerate(populasi):
+        print(f" Mengevaluasi individu {i+1}/{len(populasi)}...")
+        # Decode chromosome jika belum ada dictionary 'hyperparameters' atau jika ingin memastikan konsistensi
+        # Jika 'hyperparameters' sudah diisi saat pembuatan individu dan tidak diubah, tidak perlu decode ulang.
+        # Namun, lebih aman untuk selalu decode dari 'chromosome' sebagai satu-satunya sumber kebenaran gen.
+        decoded_params = decode_chromosome_to_hyperparameters(individu['chromosome'])
+        individu['hyperparameters'] = decoded_params # Update agar konsisten
 
-    # hitung fitness kumulatif
-    for i in range(len(populasi)):
-        if i == 0:
-            hitung_kumulatif = 0 + fitness_relatif[i]
+        fitness_value = build_and_train_model_for_ga(
+            individu['hyperparameters'],
+            train_X, train_y,
+            val_X, val_y,
+            epochs_ga=epochs_ga
+        )
+        individu['fitness'] = fitness_value
+        print(f" Individu {i+1} Fitness: {fitness_value:.4f}")
+    print("Evaluasi Fitness Selesai.\n")
+    return populasi # Mengembalikan populasi dengan fitness yang terupdate
+
+def roulette_wheel_selection(populasi):
+
+    """Seleksi individu berdasarkan fitness (asumsi fitness lebih tinggi lebih baik)."""
+    total_fitness = sum(ind['fitness'] for ind in populasi if ind['fitness'] > float('-inf')) # Hindari fitness buruk
+
+    # Jika semua fitness sangat buruk atau nol
+    if total_fitness == 0:
+        return random.choice(populasi) # Pilih secara acak jika tidak ada fitness positif
+
+    # Hitung probabilitas relatif
+    probabilities = []
+    for ind in populasi:
+        if ind['fitness'] > float('-inf'):
+            probabilities.append(ind['fitness'] / total_fitness)
         else:
-            hitung_kumulatif = fitness_kumulatif[i - 1] + fitness_relatif[i]
-        fitness_kumulatif.append(hitung_kumulatif)
+            probabilities.append(0) # Individu dengan fitness sangat buruk tidak dipilih
 
-    # print("Fitness relatif:", fitness_relatif)
-    # print("Fitness kumulatif:", fitness_kumulatif)
+    # Hitung probabilitas kumulatif
+    cumulative_probabilities = []
+    current_sum = 0
+    for p in probabilities:
+        current_sum += p
+        cumulative_probabilities.append(current_sum)
 
-    r1 = random.random()
-    
-    for i, cumulative_probability in enumerate(fitness_kumulatif):
-        if r1 <= cumulative_probability:
+    # Pilih individu
+    r = random.random()
+    for i, cumulative_prob in enumerate(cumulative_probabilities):
+        if r <= cumulative_prob:
             return populasi[i]
-
-def mutasi2(train, test, populasi):
-    # Ubah bilangan menjadi biner
-    # parents1 = {
-    #     'Alpha': to_binary(populasi['Alpha']),
-    #     'Beta': to_binary(populasi['Beta']),
-    #     'Gamma': to_binary(populasi['Gamma'])
-    # }
-
-    # Gabungkan biner
-    parents1 = populasi['Alpha'] + populasi['Beta'] + populasi['Gamma']
-    # print('mutasi sebelum di proses: ',parents1)
     
-    point1, point2 = sorted(random.sample(range(len(parents1)), 2))
-    # print('Titik potong', point1, point2)
+    return populasi[-1] # Fallback, seharusnya tidak sering terjadi jika fitness > 0
+def mutation_operator(chromosome, mutation_rate=0.1):
+    """Melakukan bit-flip mutation pada chromosome."""
+    mutated_chromosome_list = list(chromosome)
+    for i in range(len(mutated_chromosome_list)):
+        if random.random() < mutation_rate:
+            mutated_chromosome_list[i] = '1' if mutated_chromosome_list[i] == '0' else '0'
+    return "".join(mutated_chromosome_list)
 
+
+def crossover_operator(parent1_chromosome, parent2_chromosome, crossover_rate=0.8):
+    """Melakukan two-point crossover pada dua chromosome parent."""
+    if random.random() > crossover_rate:
+        # Tidak ada crossover, offspring adalah salinan parent
+        return parent1_chromosome, parent2_chromosome
+
+    len_chromo = len(parent1_chromosome)
+    if len_chromo < 2: # Tidak bisa crossover jika panjang < 2
+        return parent1_chromosome, parent2_chromosome
+
+    # Two-point crossover
+    pt1, pt2 = sorted(random.sample(range(len_chromo), 2))
     
-    # Balikkan segmen yang diinginkan
-    reversed_segment = parents1[point1:point2][::-1]
-    # print('reverse: ',reversed_segment, point1, point2)
-    # print('parents1[point1:point2]: ',parents1[point1:point2])
-    # Gabungkan kembali segmen-segmen menjadi child1
-    child1 = parents1[:point1] + reversed_segment + parents1[point2:]
-    # print('gabung anak mutasi: ',child1)
-    # kromosom_reversed = parents1[::-1]  # Membalik string
-    # print(kromosom_reversed)
-
-    # Pisahkan kembali ke alpha, beta, gamma
-    child1 = {
-        'Alpha': child1[:10],
-        'Beta': child1[10:20],
-        'Gamma': child1[20:30],
-        'Fitness': None
-    }
-
-    # Mengubah biner ke desimal
-    child1['Alpha'] = to_decimal(child1['Alpha'])
-    child1['Beta'] = to_decimal(child1['Beta'])
-    child1['Gamma'] = to_decimal(child1['Gamma'])
-
-    # Hitung nilai fitness menggunakan Holt dan MAPE
-    _, hasil_ramalan_child1, _ = holt(train, child1['Alpha'], child1['Beta'], child1['Gamma'])
+    offspring1_chromo = parent1_chromosome[:pt1] + parent2_chromosome[pt1:pt2] + parent1_chromosome[pt2:]
+    offspring2_chromo = parent2_chromosome[:pt1] + parent1_chromosome[pt1:pt2] + parent2_chromosome[pt2:]
     
-    child1['Fitness'] = MAPE(test, hasil_ramalan_child1)
+    return offspring1_chromo, offspring2_chromo
 
-    # ubah ke biner lagi
-    child1['Alpha'] = to_binary(child1['Alpha'])
-    child1['Beta'] = to_binary(child1['Beta'])
-    child1['Gamma'] = to_binary(child1['Gamma'])
+def algoritma_genetika_yolo_cnn_lstm(train_X, train_y, val_X, val_y,
+                                     jumlah_kromosom, generations,
+                                     crossover_rate, mutation_rate,
+                                     epochs_per_eval, # Epoch untuk melatih model di setiap evaluasi fitness
+                                     elite_size=2): # Jumlah individu elit
     
-    return {
-        'Alpha': child1['Alpha'],
-        'Beta': child1['Beta'],
-        'Gamma': child1['Gamma'],
-        'Fitness': child1['Fitness']
-    }
-
-def crossover(train, test, parents1, parents2):
-    # Ubah bilangan menjadi biner
-    # print(parents1)
-    # print(parents2)
-    parents1 = {
-        'Alpha': to_binary(parents1['Alpha']),
-        'Beta': to_binary(parents1['Beta']),
-        'Gamma': to_binary(parents1['Gamma'])
-    }
-    parents2 = {
-        'Alpha': to_binary(parents2['Alpha']),
-        'Beta': to_binary(parents2['Beta']),
-        'Gamma': to_binary(parents2['Gamma'])
-    }
+    # 1. Inisialisasi Populasi
+    populasi = pembentukan_populasi_awal(jumlah_kromosom)
     
-
-    # Gabungkan biner
-    parents1 = parents1['Alpha'] + parents1['Beta'] + parents1['Gamma']
-    parents2 = parents2['Alpha'] + parents2['Beta'] + parents2['Gamma']
-
-    # Menentukan titik potong
-    point1, point2 = sorted(random.sample(range(len(parents1)), 2))
-    # print(f"Titik potong: {point1}, {point2}")
-
-    # Membagi berdasarkan titik potong
-    bagian1_child1 = parents1[:point1] + parents2[point1:point2] + parents1[point2:]
-    bagian1_child2 = parents2[:point1] + parents1[point1:point2] + parents2[point2:]
-
-    # Pisahkan kembali ke alpha, beta, gamma
-    child1 = {
-        'Alpha': bagian1_child1[:10],
-        'Beta': bagian1_child1[10:20],
-        'Gamma': bagian1_child1[20:30],
-        'Fitness': None
-    }
-    child2 = {
-        'Alpha': bagian1_child2[:10],
-        'Beta': bagian1_child2[10:20],
-        'Gamma': bagian1_child2[20:30],
-        'Fitness': None
-    }
+    # 2. Evaluasi Fitness Awal
+    print("Memulai Evaluasi Fitness untuk Populasi Awal...")
+    populasi = evaluasi_fitness(populasi, train_X, train_y, val_X, val_y, epochs_ga=epochs_per_eval)
     
+    best_individu_overall = None
+    best_fitness_overall = float('-inf') # Asumsi akurasi (maksimalkan)
+    fitness_history = [] # Untuk melacak fitness terbaik per generasi
 
-    # Mengubah biner ke desimal
-    child1['Alpha'] = to_decimal(child1['Alpha'])
-    child1['Beta'] = to_decimal(child1['Beta'])
-    child1['Gamma'] = to_decimal(child1['Gamma'])
-
-    child2['Alpha'] = to_decimal(child2['Alpha'])
-    child2['Beta'] = to_decimal(child2['Beta'])
-    child2['Gamma'] = to_decimal(child2['Gamma'])
-
-    _, hasil_ramalan_child1, _ = holt(train, child1['Alpha'], child1['Beta'], child1['Gamma'])
-    _, hasil_ramalan_child2, _ = holt(train, child2['Alpha'], child2['Beta'], child2['Gamma'])
+    # Inisialisasi best_individu_overall dengan yang terbaik dari populasi awal
+    for ind in populasi:
+        if ind['fitness'] > best_fitness_overall:
+            best_fitness_overall = ind['fitness']
+            best_individu_overall = ind.copy() # Salin individu
     
-    child1['Fitness'] = MAPE(test, hasil_ramalan_child1)
-    child2['Fitness'] = MAPE(test, hasil_ramalan_child2)
+    if best_individu_overall:
+        print(f"Best Fitness Awal: {best_fitness_overall:.4f}, Hyperparams: {best_individu_overall['hyperparameters']}")
+    else:
+        print("Tidak ada individu valid di populasi awal.")
+        return None, []
 
-    # Mengubah ke biner lagi
-    child1['Alpha'] = to_binary(child1['Alpha'])
-    child1['Beta'] = to_binary(child1['Beta'])
-    child1['Gamma'] = to_binary(child1['Gamma'])
-
-    child2['Alpha'] = to_binary(child2['Alpha'])
-    child2['Beta'] = to_binary(child2['Beta'])
-    child2['Gamma'] = to_binary(child2['Gamma'])
-
-    # print('Anak 1', child1['Alpha'], child1['Beta'], child1['Gamma'], child1['Fitness'])
-    # print('Anak 2', child2['Alpha'], child2['Beta'], child2['Gamma'], child2['Fitness'])
-
-    # Mengembalikan 2 anak
-    return {
-        'Alpha': child1['Alpha'],
-        'Beta': child1['Beta'],
-        'Gamma': child1['Gamma'],
-        'Fitness': child1['Fitness']
-    }, {
-        'Alpha': child2['Alpha'],
-        'Beta': child2['Beta'],
-        'Gamma': child2['Gamma'],
-        'Fitness': child2['Fitness']
-    }
-
-
-    # Mengembalikan anak dengan fitness lebih kecil
-    # if child1['Fitness'] < child2['Fitness']:
-    #     return {
-    #     'Alpha': child1['Alpha'],
-    #     'Beta': child1['Beta'],
-    #     'Gamma': child1['Gamma'],
-    #     'Fitness': child1['Fitness']
-    # }
-    # else:
-    #     return {
-    #     'Alpha': child2['Alpha'],
-    #     'Beta': child2['Beta'],
-    #     'Gamma': child2['Gamma'],
-    #     'Fitness': child2['Fitness']
-    # }
-
-def algoritma_genetika6(train, test,  jumlahKromosom, generations, probability):
+    fitness_history.append(best_fitness_overall)
     no_improvement_count = 0
-    best_fitness_overall = float('inf')
-    best_individu_overall = float('inf')
-    fitness_history = []
-    
 
-    # Membentuk populasi awal
-    populasi = pembentukan_populasi_awal(jumlahKromosom)
-    print(f'Pembentukan populasi awal: ', populasi)
+    # 3. Loop Generasi
+    for gen in range(generations):
+        print(f"\n--- Generasi {gen + 1}/{generations} ---")
         
-    for generasi in range(1, generations + 1):
-        print(f"\nIterasi ke-{generasi}")
-        new_populasi = []
-        gabung_populasi = []
-
-        # Evaluasi fitness populasi
-        print(f"Populasi: {populasi}")
-        hitung_nilai_fitness_awal = evaluasi_fitness(populasi, train, test)
-        # print(f'Fitness values: ', hitung_nilai_fitness_awal)
+        new_population = []
         
-        # Mutasi atau crossover tergantung probabilitas
-        if len(new_populasi) < len(populasi):
-            if generasi % probability == 0:  # Mutasi
-                parent1 = RouletteWhell(hitung_nilai_fitness_awal)
-                offspring1 = mutasi2(train, test, parent1)
-                fitness_values_offspring = evaluasi_fitness([offspring1], train, test)
-                # print('Daftar dari offspring mutasi : ', fitness_values_offspring)
-                # print('Masuk mutasi')
-                new_populasi.append(offspring1)
-            else:  # Crossover
-                parent1 = RouletteWhell(hitung_nilai_fitness_awal)  # Pilih induk pertama
-                parent2 = RouletteWhell(hitung_nilai_fitness_awal)  # Pilih induk kedua
-                # Crossover: Menggabungkan dua induk untuk menghasilkan dua keturunan
-                offspring1, offspring2 = crossover(train, test, parent1, parent2)
-                fitness_values_offspring = evaluasi_fitness([offspring1, offspring2], train, test)
-                # print("Daftar dari offspring crossofer: ", evaluasi_fitness([offspring1, offspring2], train, test))
-                new_populasi.extend(fitness_values_offspring)
+        # a.i Elitisme
+        populasi.sort(key=lambda x: x['fitness'], reverse=True) # Urutkan dari fitness tertinggi
+        for i in range(min(elite_size, len(populasi))): # Pastikan elite_size tidak melebihi ukuran populasi
+            if populasi[i]['fitness'] > float('-inf'): # Hanya bawa elit yang valid
+                 new_population.append(populasi[i].copy())
+        
+        # a.ii Loop untuk Mengisi Sisa Populasi Baru
+        while len(new_population) < jumlah_kromosom:
+            parent1 = roulette_wheel_selection(populasi)
+            parent2 = roulette_wheel_selection(populasi)
+            
+            offspring1_chromo, offspring2_chromo = crossover_operator(
+                parent1['chromosome'], parent2['chromosome'], crossover_rate
+            )
+            
+            offspring1_chromo_mutated = mutation_operator(offspring1_chromo, mutation_rate)
+            offspring2_chromo_mutated = mutation_operator(offspring2_chromo, mutation_rate)
+            
+            # Buat individu offspring baru
+            new_population.append({
+                'chromosome': offspring1_chromo_mutated,
+                'hyperparameters': decode_chromosome_to_hyperparameters(offspring1_chromo_mutated),
+                'fitness': float('-inf') # Akan dievaluasi
+            })
+            if len(new_population) < jumlah_kromosom:
+                new_population.append({
+                    'chromosome': offspring2_chromo_mutated,
+                    'hyperparameters': decode_chromosome_to_hyperparameters(offspring2_chromo_mutated),
+                    'fitness': float('-inf')
+                })
+        
+        # b. Ganti Populasi Lama dengan Populasi Baru
+        populasi = new_population
+        
+        # c. Evaluasi Fitness Populasi Baru
+        print(f"Memulai Evaluasi Fitness untuk Generasi {gen + 1}...")
+        populasi = evaluasi_fitness(populasi, train_X, train_y, val_X, val_y, epochs_ga=epochs_per_eval)
+        
+        # d. Lacak Individu Terbaik
+        current_gen_best_fitness = float('-inf')
+        current_gen_best_individu = None
+        for ind in populasi:
+            if ind['fitness'] > current_gen_best_fitness:
+                current_gen_best_fitness = ind['fitness']
+            if ind['fitness'] > best_fitness_overall:
+                best_fitness_overall = ind['fitness']
+                best_individu_overall = ind.copy() # Salin individu
+                no_improvement_count = 0 # Reset jika ada perbaikan
+                print(f"  ** Individu Terbaik Baru Ditemukan di Generasi {gen+1}! Fitness: {best_fitness_overall:.4f} **")
+                print(f"     Hyperparams: {best_individu_overall['hyperparameters']}")
 
-        # Cek individu terbaik di generasi ini
-        best_individu_generasi = min(new_populasi, key=lambda x: x['Fitness'])
+        if current_gen_best_fitness > float('-inf'):
+             fitness_history.append(current_gen_best_fitness)
+             print(f"Fitness Terbaik Generasi {gen+1}: {current_gen_best_fitness:.4f}")
+        else: # Jika tidak ada fitness valid di generasi ini (jarang terjadi)
+            fitness_history.append(fitness_history[-1] if fitness_history else float('-inf'))
 
-        # Update best fitness global
-        if best_individu_generasi['Fitness'] < best_fitness_overall:
-            best_fitness_overall = best_individu_generasi['Fitness']
-            no_improvement_count = 0
+
+        if best_individu_overall and best_individu_overall['fitness'] == current_gen_best_fitness :
+             pass # Tidak ada perbaikan dari yang sudah ada
         else:
-            no_improvement_count += 1
-
-        # Hapus dan tambahkan individu baru jika tidak ada perbaikan
-        if no_improvement_count >= 12:
-            print("Tidak ada perbaikan, menghapus individu dan menambahkan individu secara acak.")
-
-            # Elitisme - simpan top individu
-            sorted_populasi = sorted(populasi, key=lambda x: x['Fitness'])
-            size_elite = int(jumlahKromosom * 0.3)  # Simpan 30% terbaik
-            elite_individuals = sorted_populasi[:size_elite]
-
-            # Tambah individu acak baru
-            individu_baru = pembentukan_populasi_awal(jumlahKromosom - size_elite)
-
-            # Update populasi
-            populasi = elite_individuals + individu_baru
-
-            # Reset penghitung
-            no_improvement_count = 0
-
-        # Gabung populasi lama dengan individu baru dari mutasi/crossover
-        gabung_populasi = populasi + new_populasi
-        populasi = gabung_populasi[:jumlahKromosom]
-
-  
-    print(f"berikut daftar populasi",populasi)
-    
-    populasi = evaluasi_fitness(populasi, train, test)
-    
-    individu_fitness_min = min(populasi, key=lambda x: x['Fitness'])
-    print("Individu dengan fitness minimum:", individu_fitness_min)
+             no_improvement_count +=1
 
 
-    print(f"\nIndividu Terbaik di Seluruh Generasi: {individu_fitness_min}")
-    return individu_fitness_min, generations, fitness_history
+        # e. Mekanisme Stagnasi (Contoh sederhana)
+        if no_improvement_count >= 10: # Jika tidak ada perbaikan dalam 10 generasi
+            print("Tidak ada perbaikan signifikan, mencoba meningkatkan laju mutasi sementara.")
+            # Anda bisa meningkatkan mutation_rate untuk beberapa generasi berikutnya
+            # atau melakukan diversifikasi populasi seperti di kode Holt-Winters Anda.
+            # Untuk sekarang, kita reset saja agar tidak terjebak selamanya.
+            # Jika Anda ingin mekanisme diversifikasi, bisa diadaptasi dari kode sebelumnya.
+            no_improvement_count = 0 # Reset untuk menghindari loop
+            # Contoh diversifikasi sederhana: ganti sebagian populasi dengan individu acak baru
+            num_to_replace = int(0.3 * jumlah_kromosom) # Ganti 30%
+            populasi.sort(key=lambda x: x['fitness']) # Urutkan dari fitness terendah
+            new_random_individuals = pembentukan_populasi_awal(num_to_replace)
+            # Evaluasi individu baru ini sebelum dimasukkan
+            new_random_individuals = evaluasi_fitness(new_random_individuals,  train_X, train_y, val_X, val_y, epochs_ga=epochs_per_eval)
+
+            populasi = populasi[num_to_replace:] + new_random_individuals # Ganti yang terburuk
+            print("Diversifikasi populasi dilakukan.")
+
+
+    print("\n--- Optimasi Algoritma Genetika Selesai ---")
+    if best_individu_overall:
+        print(f"Individu Terbaik Keseluruhan Ditemukan:")
+        print(f"  Fitness (Val Accuracy): {best_individu_overall['fitness']:.4f}")
+        print(f"  Hyperparameters: {best_individu_overall['hyperparameters']}")
+        print(f"  Chromosome: {best_individu_overall['chromosome']}")
+    else:
+        print("Tidak ada individu terbaik yang ditemukan.")
+        
+    return best_individu_overall, fitness_history

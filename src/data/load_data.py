@@ -1,5 +1,3 @@
-# src/data/load_data.py
-
 import os
 import pandas as pd
 import glob # Untuk mencari file dengan pola tertentu

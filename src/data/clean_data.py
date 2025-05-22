@@ -1,5 +1,3 @@
-# src/data/clean_data.py
-
 import pandas as pd
 import os
 
@@ -93,7 +91,3 @@ def check_file_paths_exist(df, path_column='video_path'):
     else:
         print(f"  Semua path file di kolom '{path_column}' valid.")
     return df_checked
-
-
-# Tidak ada lagi if __name__ == "__main__":
-# Fungsi-fungsi di atas bisa langsung diimpor dan digunakan di notebook.

@@ -1,6 +1,6 @@
 import tensorflow as tf
-from tensorflow import Input, Conv2D, MaxPooling2D, Flatten, Dense, Dropout, LSTM, TimeDistributed, Bidirectional
-from tensorflow import Model
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Dropout, LSTM, TimeDistributed, Bidirectional
+from tensorflow.keras.models import Model
 from ultralytics import YOLO
 import cv2
 import numpy as np
@@ -171,6 +171,92 @@ class YoloCnnLstmProcessor:
                         object_features_this_frame[(x1,y1,x2,y2)] = feature_vector # Gunakan bbox sebagai key sementara
         
         return current_frame_detections_for_tracker, object_features_this_frame
+    def process_single_live_frame(self, frame):
+        # 1. Deteksi YOLO
+        yolo_results = self.yolo_model(frame, verbose=False)[0]
+        
+        detections_for_tracker_input = []
+        temp_features_for_this_frame = {} 
+
+        for box in yolo_results.boxes:
+            confidence = float(box.conf[0])
+            if confidence >= self.yolo_confidence_threshold:
+                class_id = int(box.cls[0])
+                label_yolo = self.yolo_model.names[class_id]
+
+                if not self.target_yolo_classes or label_yolo in self.target_yolo_classes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    detections_for_tracker_input.append([x1, y1, x2, y2, confidence, class_id])
+                    
+                    if x1 < x2 and y1 < y2 and x1 >=0 and y1 >=0 and x2 <= frame.shape[1] and y2 <= frame.shape[0]:
+                        cropped_object_img = frame[y1:y2, x1:x2]
+                        if cropped_object_img.size == 0: continue
+                        
+                        cnn_input_data = self._preprocess_cropped_image_for_cnn(cropped_object_img)
+                        feature_vector = self.cnn_feature_extractor.predict(cnn_input_data, verbose=0)[0]
+                        temp_features_for_this_frame[(x1,y1,x2,y2)] = {
+                            "feature": feature_vector, 
+                            "label_yolo": label_yolo, 
+                            "confidence_yolo": confidence
+                        }
+        
+        output_detections = []
+        output_lstm_predictions = []
+
+        if self.tracker and detections_for_tracker_input:
+            tracked_objects = self.tracker.update(np.array(detections_for_tracker_input))
+            active_ids_this_frame = set()
+
+            for trk_obj in tracked_objects:
+                tx1, ty1, tx2, ty2, obj_id_tracker = map(int, trk_obj[:5])
+                active_ids_this_frame.add(obj_id_tracker)
+                
+                # --- Logika Pencocokan Fitur (Sederhana, perlu perbaikan untuk produksi) ---
+                feature_data = temp_features_for_this_frame.get((tx1, ty1, tx2, ty2))
+
+                if feature_data:
+                    feature_vector = feature_data["feature"]
+                    output_detections.append({
+                        "id": obj_id_tracker, "bbox": [tx1, ty1, tx2, ty2],
+                        "label_yolo": feature_data["label_yolo"], "confidence_yolo": feature_data["confidence_yolo"]
+                    })
+
+                    if obj_id_tracker not in self.object_feature_sequences:
+                        if len(self.object_feature_sequences) >= self.max_tracked_objects:
+                            try: oldest_id = next(iter(self.object_feature_sequences)); del self.object_feature_sequences[oldest_id]
+                            except StopIteration: pass
+                        self.object_feature_sequences[obj_id_tracker] = deque(maxlen=self.lstm_sequence_length)
+                    
+                    self.object_feature_sequences[obj_id_tracker].append(feature_vector)
+
+                    if len(self.object_feature_sequences[obj_id_tracker]) == self.lstm_sequence_length:
+                        current_sequence = np.array(self.object_feature_sequences[obj_id_tracker])
+                        lstm_input_sequence = np.expand_dims(current_sequence, axis=0)
+                        
+                        lstm_prediction_probs = self.lstm_classifier.predict(lstm_input_sequence, verbose=0)[0]
+                        predicted_class_lstm = np.argmax(lstm_prediction_probs)
+                        
+                        output_lstm_predictions.append({
+                            "id": obj_id_tracker, "behavior_class_id": int(predicted_class_lstm),
+                            "probabilities": lstm_prediction_probs.tolist()
+                        })
+            
+            ids_to_remove = set(self.object_feature_sequences.keys()) - active_ids_this_frame
+            for id_rem in ids_to_remove: del self.object_feature_sequences[id_rem]
+        
+        elif not self.tracker and temp_features_for_this_frame: 
+            idx = 0
+            for bbox_tuple, feature_data in temp_features_for_this_frame.items():
+                output_detections.append({
+                    "id": f"no_track_{idx}", "bbox": list(bbox_tuple),
+                    "label_yolo": feature_data["label_yolo"], "confidence_yolo": feature_data["confidence_yolo"]
+                })
+                idx +=1
+
+        return {
+            "current_detections": output_detections,
+            "new_lstm_predictions": output_lstm_predictions 
+        }
 
 
     def process_video_sequence(self, video_frames_generator):
@@ -308,23 +394,47 @@ class YoloCnnLstmProcessor:
 # --- Contoh Penggunaan ---
 if __name__ == "__main__":
     # --- Konfigurasi ---
-    YOLO_MODEL = "yolov8n.pt"
-    # Path ke bobot terlatih (jika ada)
-    CNN_WEIGHTS = None # "path/to/your/cnn_feature_extractor.h5" 
-    LSTM_WEIGHTS = None # "path/to/your/lstm_classifier.h5"
+    YOLO_MODEL = "yolov8n.pt" # Ini akan diunduh jika belum ada di direktori kerja
+    CNN_WEIGHTS = None 
+    LSTM_WEIGHTS = None 
     
     CNN_INPUT_SIZE_HW = (64, 64)
     CNN_FEATURE_DIM = 128
     
-    LSTM_SEQ_LEN = 15 # Perlu 15 frame untuk satu prediksi perilaku
+    LSTM_SEQ_LEN = 15 
     LSTM_UNITS = 64
-    NUM_BEHAVIOR_CLASSES = 3 # Misal: normal, mencurigakan, berhenti
+    # Definisikan nama kelas perilaku Anda di sini agar bisa ditampilkan
+    BEHAVIOR_CLASS_NAMES = { 
+        0: "Normal", 
+        1: "Aneh", 
+        2: "Berbahaya" 
+    } # Sesuaikan dengan jumlah dan nama kelas Anda
+    NUM_BEHAVIOR_CLASSES = len(BEHAVIOR_CLASS_NAMES)
     USE_BIDIRECTIONAL_LSTM = False
 
     TARGET_CLASSES_FROM_YOLO = ['person', 'car', 'truck', 'bus', 'motorbike']
     YOLO_CONF_THRESHOLD = 0.45
 
+    # --- Path Video ---
+    # Tentukan path ke video input Anda
+    VIDEO_INPUT_PATH = os.path.join(
+        os.path.dirname(__file__), # Direktori saat ini (src/models/yolo)
+        "..", # Naik ke src/models
+        "..", # Naik ke src
+        "..", # Naik ke root proyek (D:/Earth/Smart-CCTV)
+        "data", "raw", "video30.mp4"
+    )
+    # Path untuk menyimpan video output
+    VIDEO_OUTPUT_PATH = os.path.join(
+        os.path.dirname(__file__), 
+        "..", "..", "..",
+        "data", "processed", "video30_processed_output.mp4" # Simpan di data/processed
+    )
+    os.makedirs(os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "processed"), exist_ok=True)
+
+
     # Inisialisasi Prosesor
+    print("Menginisialisasi YoloCnnLstmProcessor...")
     processor = YoloCnnLstmProcessor(
         yolo_model_path=YOLO_MODEL,
         cnn_input_size=CNN_INPUT_SIZE_HW,
@@ -338,61 +448,100 @@ if __name__ == "__main__":
         target_yolo_classes=TARGET_CLASSES_FROM_YOLO,
         yolo_confidence_threshold=YOLO_CONF_THRESHOLD
     )
+    print("Inisialisasi Selesai.")
 
-    # --- Simulasi Pemrosesan Video ---
-    # Buat generator frame dummy atau muat dari file video nyata
-    def dummy_video_frames_generator(num_frames=50, frame_height=480, frame_width=640):
-        print(f"Memulai generator frame dummy ({num_frames} frames)...")
-        for i in range(num_frames):
-            # Buat frame dengan beberapa "objek" bergerak sederhana untuk di-track
-            frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
-            
-            # Objek 1: bergerak dari kiri ke kanan
-            obj1_x = int(50 + (frame_width - 150) * (i / num_frames))
-            obj1_y = frame_height // 2
-            cv2.rectangle(frame, (obj1_x, obj1_y - 20), (obj1_x + 40, obj1_y + 20), (0, 255, 0), -1) # Hijau
-            
-            # Objek 2: bergerak dari atas ke bawah
-            obj2_x = frame_width // 3
-            obj2_y = int(50 + (frame_height - 150) * (i / num_frames))
-            cv2.rectangle(frame, (obj2_x - 20, obj2_y), (obj2_x + 20, obj2_y + 30), (255, 0, 0), -1) # Biru
-            
-            if i % 5 == 0: # Agar tidak terlalu banyak print
-                print(f"  Menghasilkan dummy frame ke-{i+1}")
-            yield frame
-            
-    # Ganti dengan path video Anda jika ingin memproses video nyata
-    video_path_input = "path/to/your/sample_video.mp4" # GANTI INI JIKA PERLU
+    # --- Membaca Video Input ---
+    if not os.path.exists(VIDEO_INPUT_PATH):
+        print(f"ERROR: File video input tidak ditemukan di {VIDEO_INPUT_PATH}")
+        exit()
 
-    frame_generator = None
-    if os.path.exists(video_path_input):
-        print(f"Memproses video dari: {video_path_input}")
-        cap = cv2.VideoCapture(video_path_input)
-        def video_file_generator(capture):
-            while True:
-                ret, frame = capture.read()
-                if not ret:
-                    break
-                yield frame
-            capture.release()
-        frame_generator = video_file_generator(cap)
-    else:
-        print(f"File video contoh tidak ditemukan di '{video_path_input}'. Menggunakan generator frame dummy.")
-        frame_generator = dummy_video_frames_generator(num_frames=30) # Kurangi jumlah frame untuk demo cepat
+    cap = cv2.VideoCapture(VIDEO_INPUT_PATH)
+    if not cap.isOpened():
+        print(f"Error: Tidak bisa membuka video {VIDEO_INPUT_PATH}")
+        exit()
 
-    if frame_generator:
-        lstm_predictions_output = processor.process_video_sequence(frame_generator)
+    # Dapatkan properti video untuk VideoWriter
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    print(f"Video Input: {VIDEO_INPUT_PATH} ({frame_width}x{frame_height} @ {fps:.2f} FPS)")
 
-        print("\n--- Hasil Prediksi LSTM Keseluruhan ---")
-        if lstm_predictions_output:
-            for obj_id, predictions in lstm_predictions_output.items():
-                if predictions: # Hanya tampilkan jika ada prediksi untuk objek ini
-                    print(f"Objek ID: {obj_id}")
-                    for pred_info in predictions:
-                        print(f"  Frame {pred_info['frame']}: Kelas Prediksi LSTM = {pred_info['predicted_class']}")
-                                #   (Probs: {pred_info['class_probs']})")
-                    print("-" * 20)
-        else:
-            print("Tidak ada prediksi LSTM yang dihasilkan.")
-    
-    print("\nContoh selesai.")
+    # --- Inisialisasi Video Output ---
+    # Gunakan codec 'mp4v' untuk .mp4 atau 'XVID' untuk .avi
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+    out_video_writer = cv2.VideoWriter(VIDEO_OUTPUT_PATH, fourcc, fps, (frame_width, frame_height))
+    print(f"Video Output akan disimpan ke: {VIDEO_OUTPUT_PATH}")
+
+    frame_count = 0
+    # Dictionary untuk menyimpan prediksi LSTM terakhir untuk setiap ID objek yang aktif
+    last_lstm_behavior_for_id = {}
+
+    print("\nMemulai pemrosesan video frame per frame...")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Selesai membaca semua frame atau error saat membaca frame.")
+            break
+
+        frame_count += 1
+        if frame_count % 10 == 0: # Print status setiap 10 frame
+             print(f"  Memproses frame ke-{frame_count}...")
+
+        output_frame_to_draw = frame.copy() # Buat salinan frame untuk digambari
+
+        # Proses frame menggunakan YoloCnnLstmProcessor
+        # Metode ini harus mengembalikan deteksi saat ini dan prediksi LSTM baru
+        results_per_frame = processor.process_single_live_frame(frame)
+        
+        current_detections = results_per_frame.get('current_detections', [])
+        new_lstm_predictions = results_per_frame.get('new_lstm_predictions', [])
+
+        # Update prediksi LSTM terakhir untuk ID objek
+        for lstm_pred in new_lstm_predictions:
+            obj_id = lstm_pred.get('id')
+            behavior_id = lstm_pred.get('behavior_class_id')
+            if obj_id is not None and behavior_id is not None:
+                last_lstm_behavior_for_id[obj_id] = BEHAVIOR_CLASS_NAMES.get(behavior_id, f"Kelas {behavior_id}")
+
+        # Gambar hasil deteksi dan prediksi pada output_frame_to_draw
+        for det in current_detections:
+            obj_id = det.get('id')
+            bbox = det.get('bbox')
+            label_yolo = det.get('label_yolo', 'N/A')
+            confidence_yolo = det.get('confidence_yolo', 0.0)
+
+            if bbox:
+                x1, y1, x2, y2 = bbox
+                color = (0, 255, 0) # Hijau untuk bounding box YOLO
+                cv2.rectangle(output_frame_to_draw, (x1, y1), (x2, y2), color, 2)
+                
+                # Label YOLO dan ID Objek
+                yolo_text = f"{label_yolo} ({confidence_yolo:.2f})"
+                if obj_id is not None:
+                    yolo_text += f" ID:{obj_id}"
+                
+                text_y_pos = y1 - 10 if y1 - 10 > 10 else y1 + 20
+                cv2.putText(output_frame_to_draw, yolo_text, (x1, text_y_pos), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                # Tampilkan prediksi perilaku LSTM jika ada untuk ID objek ini
+                if obj_id is not None and obj_id in last_lstm_behavior_for_id:
+                    behavior_text = f"P: {last_lstm_behavior_for_id[obj_id]}" # P: Perilaku
+                    cv2.putText(output_frame_to_draw, behavior_text, (x1, y2 + 20), # Di bawah bbox
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 0), 2) # Warna biru-cyan
+
+        # Tulis frame yang sudah dianotasi ke file video output
+        out_video_writer.write(output_frame_to_draw)
+
+        # (Opsional) Tampilkan frame yang sedang diproses
+        # cv2.imshow("Processed Frame", output_frame_to_draw)
+        # if cv2.waitKey(1) & 0xFF == ord('q'): # Tekan 'q' untuk keluar
+        #     break
+            
+    # Setelah loop selesai, lepaskan semua resource
+    cap.release()
+    out_video_writer.release()
+    # cv2.destroyAllWindows() # Jika menggunakan cv2.imshow()
+
+    print(f"\nPemrosesan video selesai. Output disimpan di: {VIDEO_OUTPUT_PATH}")
+    print("Contoh visualisasi selesai.")

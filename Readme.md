@@ -81,14 +81,3 @@ Untuk menyiapkan lingkungan dan menjalankan proyek ini, ikuti langkah-langkah be
     ```
 
     File `requirements.txt` berisi semua pustaka Python yang dibutuhkan, termasuk `torch`, `tensorflow`, `ultralytics`, `opencv-python`, dll.
-
-## Penggunaan
-
-### 1. Persiapan Data
-
-- Tempatkan dataset Anda di direktori `data/`.
-- Jalankan skrip pra-pemrosesan yang relevan dari `src/data/` atau ikuti langkah-langkah di notebook `notebooks/01-data-exploration.ipynb` dan `notebooks/02-prepocessing.ipynb`.
-  ```bash
-  # Contoh
-  # python src/data/preprocess_script.py --input data/raw --output data/processed
-  ```

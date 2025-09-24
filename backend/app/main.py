@@ -9,7 +9,4 @@ app = FastAPI(
 
 @app.get("/", tags=["Root"])
 def read_root():
-    """
-    Endpoint utama untuk mengecek apakah API berjalan.
-    """
     return {"message": "Backend is running!"}

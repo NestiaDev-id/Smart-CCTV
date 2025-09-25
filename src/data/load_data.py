@@ -1,15 +1,9 @@
 import os
 import pandas as pd
-import glob # Untuk mencari file dengan pola tertentu
-
-# --- Fungsi untuk memuat berbagai jenis data ---
+import glob
 
 def load_video_paths(data_dir):
-    """
-    Memuat path ke file video dari direktori.
-    Asumsi: semua file video relevan ada di dalam data_dir atau subdirektorinya.
-    """
-    video_extensions = ["*.mp4", "*.avi", "*.mov", "*.mkv"] # Tambahkan ekstensi lain jika perlu
+    video_extensions = ["*.mp4", "*.avi", "*.mov", "*.mkv"]
     video_paths = []
     for ext in video_extensions:
         video_paths.extend(glob.glob(os.path.join(data_dir, "**", ext), recursive=True))
@@ -19,9 +13,6 @@ def load_video_paths(data_dir):
     return video_paths
 
 def load_image_paths(data_dir):
-    """
-    Memuat path ke file gambar (frame) dari direktori.
-    """
     image_extensions = ["*.jpg", "*.jpeg", "*.png"]
     image_paths = []
     for ext in image_extensions:
@@ -57,10 +48,6 @@ def load_annotations(annotation_path):
         return pd.DataFrame()
 
 def process_loaded_data(raw_data_path, annotation_file_path=None):
-    """
-    Fungsi untuk memuat data mentah dan mengembalikan DataFrame yang diproses.
-    Ini menggabungkan logika dari fungsi main sebelumnya tetapi mengembalikan DataFrame.
-    """
     print(f"Memproses pemuatan data dari: {raw_data_path}")
     if annotation_file_path:
         print(f"Memuat anotasi dari: {annotation_file_path}")

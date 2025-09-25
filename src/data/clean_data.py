@@ -2,9 +2,6 @@ import pandas as pd
 import os
 
 def clean_missing_values(df, columns_to_check=None):
-    """
-    Menangani nilai yang hilang.
-    """
     print("Memeriksa nilai yang hilang...")
     initial_rows = len(df)
     
@@ -21,9 +18,6 @@ def clean_missing_values(df, columns_to_check=None):
     return df_cleaned
 
 def remove_duplicates(df, subset_cols=None):
-    """
-    Menghapus baris duplikat.
-    """
     print("Menghapus duplikat...")
     initial_rows = len(df)
     df_cleaned = df.copy()
@@ -33,12 +27,9 @@ def remove_duplicates(df, subset_cols=None):
     return df_cleaned
 
 def filter_data_by_condition(df, column_name, condition_value, operator="=="):
-    """
-    Memfilter data berdasarkan kondisi tertentu.
-    """
     print(f"Memfilter data: Kolom '{column_name}' {operator} '{condition_value}'...")
     initial_rows = len(df)
-    df_filtered = df.copy() # Bekerja pada salinan
+    df_filtered = df.copy() 
 
     if column_name not in df_filtered.columns:
         print(f"  Peringatan: Kolom '{column_name}' tidak ditemukan dalam DataFrame. Tidak ada filter yang diterapkan.")
@@ -71,23 +62,3 @@ def filter_data_by_condition(df, column_name, condition_value, operator="=="):
     rows_after_filter = len(df_filtered)
     print(f"  {initial_rows - rows_after_filter} baris dihapus oleh filter.")
     return df_filtered
-
-def check_file_paths_exist(df, path_column='video_path'):
-    """
-    Memeriksa apakah path file dalam kolom tertentu ada.
-    Menghapus baris jika path tidak ada.
-    """
-    if path_column not in df.columns:
-        print(f"Peringatan: Kolom path '{path_column}' tidak ditemukan untuk pemeriksaan keberadaan file.")
-        return df
-
-    print(f"Memeriksa keberadaan file di kolom '{path_column}'...")
-    initial_rows = len(df)
-    # Pastikan path adalah string sebelum os.path.exists
-    df_checked = df[df[path_column].apply(lambda x: isinstance(x, str) and os.path.exists(x))]
-    rows_after_check = len(df_checked)
-    if initial_rows - rows_after_check > 0:
-        print(f"  {initial_rows - rows_after_check} baris dihapus karena path file tidak valid/tidak ditemukan.")
-    else:
-        print(f"  Semua path file di kolom '{path_column}' valid.")
-    return df_checked

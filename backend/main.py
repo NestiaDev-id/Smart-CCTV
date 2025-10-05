@@ -1,0 +1,36 @@
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import socketio
+from app.routes.tracking import sio
+
+app = FastAPI(
+    title="Smart CCTV Backend",
+    description="Backend untuk live object tracking dari stream YouTube.",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+socket_app = socketio.ASGIApp(sio)
+app.mount("/", socket_app)
+
+@app.get("/status")
+def read_status():
+    """Endpoint untuk memeriksa apakah server berjalan."""
+    return {"status": "ok", "message": "Server backend Smart CCTV aktif!"}
+
+if __name__ == "__main__":
+    print("🚀 Menjalankan server backend pada http://0.0.0.0:8000")
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
+    )

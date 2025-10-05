@@ -34,7 +34,7 @@ def load_annotations(annotation_path):
     try:
         if annotation_path.endswith('.csv'):
             annotations_df = pd.read_csv(annotation_path)
-        # Tambahkan parsing untuk format lain seperti JSON atau XML jika perlu
+        # parsing untuk format lain seperti JSON atau XML
         # elif annotation_path.endswith('.json'):
         #     annotations_df = pd.read_json(annotation_path)
         else:
@@ -70,8 +70,7 @@ def process_loaded_data(raw_data_path, annotation_file_path=None):
 
     if not all_annotations_df.empty and 'filename' in all_annotations_df.columns and not loaded_data_df.empty:
         cols_to_use = all_annotations_df.columns.difference(loaded_data_df.columns.drop('filename'))
-        # Jika 'filename' tidak unik di salah satu DataFrame, merge bisa menghasilkan lebih banyak baris dari yang diharapkan.
-        # Pertimbangkan validasi atau penanganan duplikat sebelum merge jika ini adalah masalah.
+       
         processed_data_df = pd.merge(loaded_data_df, all_annotations_df[list(cols_to_use) + ['filename']], on='filename', how='left')
 
         print("Data video dan anotasi digabungkan (jika ada kecocokan).")
@@ -86,6 +85,3 @@ def process_loaded_data(raw_data_path, annotation_file_path=None):
         return pd.DataFrame()
         
     return processed_data_df
-
-# Tidak ada lagi if __name__ == "__main__":
-# Fungsi-fungsi di atas bisa langsung diimpor dan digunakan di notebook.

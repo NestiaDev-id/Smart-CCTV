@@ -2,7 +2,8 @@
 
 import torch
 from ultralytics import YOLO
-from ocsort.ocsort import OCSort
+# --- Perubahan di sini ---
+from deep_sort_realtime.deepsort_tracker import DeepSort
 
 print("🚀 Inisialisasi Core Model...")
 
@@ -16,7 +17,7 @@ model = YOLO('weights/yolov8n.pt').to(device)
 class_names = model.names
 print("--> ✅ Model YOLOv8 berhasil dimuat.")
 
-# Inisialisasi tracker OC-SORT
-print("--> Menginisialisasi OC-SORT tracker...")
-tracker = OCSort(det_thresh=0.4, iou_threshold=0.5, use_byte=False)
+# Inisialisasi tracker DeepSORT
+print("--> Menginisialisasi DeepSORT tracker...")
+tracker = DeepSort(max_age=30, n_init=3, nms_max_overlap=1.0)
 print("--> ✅ Tracker berhasil diinisialisasi.")

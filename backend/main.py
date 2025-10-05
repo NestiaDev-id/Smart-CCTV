@@ -23,7 +23,6 @@ app.mount("/", socket_app)
 
 @app.get("/status")
 def read_status():
-    """Endpoint untuk memeriksa apakah server berjalan."""
     return {"status": "ok", "message": "Server backend Smart CCTV aktif!"}
 
 if __name__ == "__main__":

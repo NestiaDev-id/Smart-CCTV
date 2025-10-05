@@ -6,12 +6,12 @@ import base64
 import numpy as np
 import yt_dlp
 import socketio
-from ..core.model import model, tracker, class_names # Impor model dari core
+from ..core.model import model, tracker, class_names # Impor model & tracker dari core
 
 # Inisialisasi Socket.IO Server
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
 
-# Dictionary untuk menyimpan tugas pemrosesan video untuk setiap koneksi
+# Dictionary untuk menyimpan tugas pemrosesan video
 video_processing_tasks = {}
 
 def get_video_stream_url(youtube_url):
@@ -34,31 +34,54 @@ async def process_video(sid, stream_url):
             ret, frame = cap.read()
             if not ret:
                 break
+            
+            # algoritma tracking steps
 
+            # 1. Deteksi objek dengan YOLOv8
             results = model(frame, stream=False, verbose=False)
-            detections = []
+            
+            # 2. Siapkan data deteksi untuk DeepSORT
+            # Format: [ [x1, y1, w, h], confidence, class_id ]
+            detections_for_deepsort = []
             for r in results:
                 boxes = r.boxes
                 for box in boxes:
                     x1, y1, x2, y2 = box.xyxy[0]
-                    conf = box.conf[0]
+                    conf = float(box.conf[0])
                     cls = int(box.cls[0])
-                    detections.append([x1, y1, x2, y2, conf, cls])
-            
-            detections_np = np.array(detections)
+                    
+                    # Konversi (x1, y1, x2, y2) ke (x, y, w, h)
+                    w = x2 - x1
+                    h = y2 - y1
+                    detections_for_deepsort.append(
+                        ([int(x1), int(y1), int(w), int(h)], conf, class_names[cls])
+                    )
 
-            if len(detections_np) > 0:
-                tracked_objects = tracker.update(detections_np, frame)
-                for obj in tracked_objects:
-                    x1, y1, x2, y2, obj_id, cls_id, conf = obj
-                    color = (0, 255, 0)
-                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-                    label = f"ID: {int(obj_id)} {class_names[int(cls_id)]}"
-                    cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            # 3. Update tracker DeepSORT
+            # Parameter kedua adalah frame, yang digunakan DeepSORT untuk fitur penampilan
+            tracks = tracker.update_tracks(detections_for_deepsort, frame=frame)
 
+            # 4. Gambar bounding box dan ID dari hasil tracking
+            for track in tracks:
+                if not track.is_confirmed():
+                    continue
+                
+                track_id = track.track_id
+                ltrb = track.to_ltrb() # Dapatkan format [left, top, right, bottom]
+                
+                x1, y1, x2, y2 = int(ltrb[0]), int(ltrb[1]), int(ltrb[2]), int(ltrb[3])
+                class_name = track.get_det_class()
+                
+                color = (0, 255, 0)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                label = f"ID: {track_id} {class_name}"
+                cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # Encode frame ke format JPEG lalu ke Base64 untuk dikirim
             _, buffer = cv2.imencode('.jpg', frame)
             frame_base64 = base64.b64encode(buffer).decode('utf-8')
             
+            # Kirim frame ke client
             await sio.emit('video_frame', {'image': frame_base64}, to=sid)
             await asyncio.sleep(0.01)
 
@@ -70,6 +93,7 @@ async def process_video(sid, stream_url):
         print(f"Stream untuk SID {sid} telah ditutup.")
         if sid in video_processing_tasks:
             del video_processing_tasks[sid]
+
 
 @sio.on('connect')
 def connect(sid, environ):
@@ -85,15 +109,6 @@ def disconnect(sid):
 
 @sio.on('process_youtube_url')
 async def process_youtube_url(sid, data):
-    # Validasi data menggunakan skema Pydantic
-    # from ..schemas.tracking import YouTubeUrlPayload
-    # try:
-    #     payload = YouTubeUrlPayload(**data)
-    #     url = str(payload.url)
-    # except Exception:
-    #     await sio.emit('error', {'message': 'URL tidak valid.'}, to=sid)
-    #     return
-    
     url = data.get('url')
     if not url:
         await sio.emit('error', {'message': 'URL tidak ditemukan.'}, to=sid)

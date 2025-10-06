@@ -51,8 +51,9 @@ Berikut adalah gambaran umum struktur direktori proyek ini:
 
 ## Prasyarat
 
-- Python 3.8+
+- Python `v3.8` hingga `v3.11`
 - Pip (Python package installer)
+- DeepSort for tracking
 
 ## Instalasi
 

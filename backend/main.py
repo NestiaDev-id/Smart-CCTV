@@ -1,3 +1,8 @@
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,20 +15,20 @@ app = FastAPI(
     version="1.0.0"
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],  
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 socket_app = socketio.ASGIApp(sio)
-app.mount("/ws", socket_app)
+app.mount("/", socket_app)
 
-@app.get("/")
-async def root():
-    return {"message": "Server backend is running"}
+# @app.get("/")
+# async def root():
+#     return {"message": "Server backend is running"}
 
 @app.get("/status")
 def read_status():

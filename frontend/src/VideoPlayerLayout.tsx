@@ -1,28 +1,86 @@
 // src/components/VideoPlayerLayout.tsx
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+// --- BARU ---
+import { io, Socket } from "socket.io-client";
 
 // Tipe untuk sumber video agar lebih jelas
 type VideoSourceType = "url" | "file" | null;
 
+// --- BARU ---
+// Definisikan alamat backend di satu tempat
+const BACKEND_URL = "http://127.0.0.1:8000";
+
 const VideoPlayerLayout: React.FC = () => {
   // State untuk menyimpan URL video yang akan diputar
   const [videoSource, setVideoSource] = useState<string | null>(null);
-
+  // --- BARU ---
+  // State untuk menyimpan URL YouTube mentah yang akan dikirim ke backend
+  const [rawYoutubeUrl, setRawYoutubeUrl] = useState<string>("");
   // State untuk menyimpan tipe input (URL atau file)
   const [sourceType, setSourceType] = useState<VideoSourceType>(null);
-
   // State untuk mengontrol input field URL
   const [urlInput, setUrlInput] = useState<string>("");
 
-  // State baru untuk status pemrosesan CCTV
+  // State untuk status pemrosesan CCTV
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  // State baru untuk status download
+  // State untuk status download
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
 
-  // Fungsi untuk membersihkan object URL dari file yang diunggah untuk mencegah memory leak
+  // --- BARU ---
+  // State untuk menyimpan frame gambar yang diproses dari backend
+  const [processedFrame, setProcessedFrame] = useState<string>("");
+  // State untuk menyimpan pesan status dari backend
+  const [statusMessage, setStatusMessage] = useState<string>(
+    "Menunggu input video..."
+  );
+  // Ref untuk menyimpan instance socket agar tidak dibuat ulang setiap render
+  const socketRef = useRef<Socket | null>(null);
+
+  // --- BARU ---
+  // Efek untuk mengelola koneksi Socket.IO
   useEffect(() => {
-    // Cleanup function ini akan dijalankan saat komponen unmount atau saat videoSource berubah
+    // Hubungkan ke server backend saat komponen dimuat
+    socketRef.current = io(BACKEND_URL);
+    const socket = socketRef.current;
+
+    socket.on("connect", () => {
+      console.log("✅ Berhasil terhubung ke server backend!");
+      setStatusMessage("Terhubung. Silakan muat video.");
+    });
+
+    socket.on("disconnect", () => {
+      console.log("🔌 Terputus dari server backend.");
+      setStatusMessage("Koneksi terputus. Coba refresh halaman.");
+      setIsProcessing(false); // Hentikan status processing jika koneksi putus
+    });
+
+    socket.on("processing_started", (data) => {
+      console.log(data.message);
+      setStatusMessage("Live processing sedang berjalan...");
+    });
+
+    socket.on("video_frame", (data) => {
+      // Menerima frame baru dan menyimpannya di state
+      // console.log("Menerima frame dari backend:", data);
+
+      setProcessedFrame(`data:image/jpeg;base64,${data.image}`);
+    });
+
+    socket.on("error", (data) => {
+      console.error("Error dari backend:", data.message);
+      setStatusMessage(`Error: ${data.message}`);
+      setIsProcessing(false); // Hentikan processing jika ada error
+    });
+
+    // Cleanup: putuskan koneksi saat komponen di-unmount
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  // Efek untuk membersihkan object URL dari file
+  useEffect(() => {
     return () => {
       if (sourceType === "file" && videoSource) {
         URL.revokeObjectURL(videoSource);
@@ -32,11 +90,9 @@ const VideoPlayerLayout: React.FC = () => {
 
   /**
    * Meng-handle submit dari input URL YouTube.
-   * Fungsi ini akan mengubah URL YouTube standar menjadi URL embed.
    */
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Regex untuk mengekstrak ID video dari berbagai format URL YouTube
     const youtubeRegex =
       /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
     const match = urlInput.match(youtubeRegex);
@@ -44,21 +100,48 @@ const VideoPlayerLayout: React.FC = () => {
     if (match && match[1]) {
       const videoId = match[1];
       setVideoSource(`https://www.youtube.com/embed/${videoId}`);
+
+      // Simpan URL asli untuk dikirim ke backend
+      setRawYoutubeUrl(urlInput);
       setSourceType("url");
+      // Hentikan pemrosesan jika sedang berjalan video lain
+      if (isProcessing) {
+        setIsProcessing(false);
+      }
+      setStatusMessage("Video siap. Klik 'Run Smart CCTV' untuk memulai.");
     } else {
       alert("URL YouTube tidak valid. Silakan coba lagi.");
     }
   };
-  // Handler untuk tombol Run/Stop Smart CCTV
+
   const handleToggleProcessing = () => {
-    if (!videoSource) {
-      alert("Silakan muat video terlebih dahulu.");
+    if (sourceType !== "url") {
+      alert("Fitur Smart CCTV hanya tersedia untuk video dari YouTube.");
       return;
     }
-    setIsProcessing((prev) => !prev);
+
+    const socket = socketRef.current;
+    if (!socket) return;
+
+    if (isProcessing) {
+      socket.disconnect();
+      setIsProcessing(false);
+      setStatusMessage(
+        "Processing dihentikan. Hubungkan kembali untuk memulai lagi."
+      );
+      setTimeout(() => socket.connect(), 100);
+    } else {
+      // Jika tidak berjalan, mulai
+      if (rawYoutubeUrl) {
+        socket.emit("process_youtube_url", { url: rawYoutubeUrl });
+        setIsProcessing(true);
+        setStatusMessage("Mengirim request ke server...");
+      } else {
+        alert("URL YouTube tidak ditemukan. Harap muat video terlebih dahulu.");
+      }
+    }
   };
 
-  // Handler untuk tombol download (simulasi)
   const handleDownloadClip = () => {
     if (sourceType !== "url") {
       alert("Fungsi download hanya tersedia untuk video dari YouTube.");
@@ -81,31 +164,38 @@ const VideoPlayerLayout: React.FC = () => {
 
   /**
    * Meng-handle perubahan pada input file.
-   * Fungsi ini akan membuat Object URL dari file yang dipilih.
    */
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Membuat URL sementara untuk file lokal
       const fileUrl = URL.createObjectURL(file);
       setVideoSource(fileUrl);
       setSourceType("file");
+      if (isProcessing) setIsProcessing(false); // Hentikan pemrosesan jika beralih ke file
     }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white p-4 sm:p-6 md:p-8">
       <div className="container mx-auto">
-        {/* <h1 className="text-3xl font-bold mb-6 text-center">React Video Player</h1> */}
         <div className="flex flex-col md:flex-row gap-8">
           {/* Kolom Kiri: Output Video */}
           <div className="w-full md:flex-1 bg-black rounded-xl shadow-lg overflow-hidden">
             <div className="aspect-video w-full h-full">
-              {!videoSource ? (
+              {isProcessing ? (
+                // Jika sedang diproses, tampilkan stream gambar dari backend
+                <img
+                  src={processedFrame}
+                  alt="Live CCTV Processing..."
+                  className="w-full h-full object-contain"
+                />
+              ) : !videoSource ? (
+                // Jika tidak ada video sama sekali
                 <div className="flex items-center justify-center h-full text-gray-500">
                   <p className="text-xl">Video akan muncul di sini</p>
                 </div>
               ) : sourceType === "url" ? (
+                // Jika ada video URL (tampilan iframe sebelum diproses)
                 <iframe
                   className="w-full h-full"
                   src={videoSource}
@@ -115,6 +205,7 @@ const VideoPlayerLayout: React.FC = () => {
                   allowFullScreen
                 ></iframe>
               ) : (
+                // Jika video dari file
                 <video
                   className="w-full h-full"
                   src={videoSource || ""}
@@ -152,14 +243,12 @@ const VideoPlayerLayout: React.FC = () => {
                 </button>
               </form>
 
-              {/* Separator */}
               <div className="flex items-center">
                 <hr className="flex-grow border-gray-600" />
                 <span className="px-3 text-gray-500 text-sm">ATAU</span>
                 <hr className="flex-grow border-gray-600" />
               </div>
 
-              {/* Input via Upload File */}
               <div>
                 <label
                   htmlFor="video-upload"
@@ -175,12 +264,15 @@ const VideoPlayerLayout: React.FC = () => {
                   onChange={handleFileChange}
                 />
                 <p className="text-xs text-gray-500 mt-2 text-center">
-                  File video yang diunggah tidak dikirim ke server, hanya
-                  diputar secara lokal di browser Anda.
+                  File video yang diunggah tidak dikirim ke server.
                 </p>
               </div>
             </div>
             <div className="bg-gray-800 p-6 rounded-xl shadow-lg flex flex-col gap-6 mt-6">
+              <div className="text-center text-sm text-gray-400">
+                {statusMessage}
+              </div>
+
               {/* Tombol Running */}
               <div className="text-center">
                 {isProcessing && (
@@ -196,28 +288,32 @@ const VideoPlayerLayout: React.FC = () => {
                 )}
                 <button
                   onClick={handleToggleProcessing}
+                  disabled={sourceType !== "url"}
                   className={`w-full font-bold py-2 px-4 rounded-md transition-colors duration-300 ${
                     isProcessing
                       ? "bg-red-600 hover:bg-red-700"
                       : "bg-indigo-600 hover:bg-indigo-700"
-                  }`}
+                  } disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed`}
                 >
                   {isProcessing ? "Stop Processing" : "Run Smart CCTV"}
                 </button>
               </div>
 
               {/* Tombol Download */}
-              <div>
+              <div className="text-center">
                 <button
                   onClick={handleDownloadClip}
-                  disabled={sourceType !== "url" || isDownloading}
-                  className="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-md transition-colors duration-300 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed"
+                  disabled={
+                    sourceType !== "url" || isProcessing || isDownloading
+                  }
+                  className={`w-full font-bold py-2 px-4 rounded-md transition-colors duration-300 ${
+                    isDownloading
+                      ? "bg-gray-700 cursor-not-allowed"
+                      : "bg-green-600 hover:bg-green-700"
+                  } disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed`}
                 >
                   {isDownloading ? "Processing..." : "Download 30s Clip"}
                 </button>
-                <p className="text-xs text-gray-400 mt-2 text-center">
-                  Hanya berfungsi untuk video YouTube.
-                </p>
               </div>
             </div>
           </div>

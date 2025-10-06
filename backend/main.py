@@ -19,17 +19,20 @@ app.add_middleware(
 )
 
 socket_app = socketio.ASGIApp(sio)
-app.mount("/", socket_app)
+app.mount("/ws", socket_app)
+
+@app.get("/")
+async def root():
+    return {"message": "Server backend is running"}
 
 @app.get("/status")
 def read_status():
     return {"status": "ok", "message": "Server backend Smart CCTV aktif!"}
 
-if __name__ == "__main__":
-    print("🚀 Menjalankan server backend pada http://0.0.0.0:8000")
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True
-    )
+# if __name__ == "__main__":
+#     print("🚀 Menjalankan server backend pada http://0.0.0.0:8000")
+#     uvicorn.run(
+#         "main:app",
+#         port=8000,
+#         reload=True
+#     )
